@@ -1,164 +1,218 @@
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.rmi.*;
-import java.rmi.server.UnicastRemoteObject;
-import java.util.List;
-import java.util.Map;
+import java.rmi.server.*;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
 
-public class Client extends UnicastRemoteObject implements ClientCallbackInterface {
+public class Client extends UnicastRemoteObject implements RemoteBroadcastInterface {
 
+    private final BroadcastHandler broadcastHandler;
     private CrissCrossPuzzleInterface server;
-    private AccountServiceInterface accountService;
-    private ScoreboardInterface scoreboard;
     private String username;
-    private Integer gameID;
-    Boolean myTurn;
-    Boolean gameStartFlag;
-    private volatile Boolean gameOverFlag;
-    private Boolean supressHeartbeat;
-    private Integer currentSequence;
+    private Integer gameID = -1;
+    private volatile Boolean gameOverFlag = false;
+    private char[][] currentPuzzle;
+    private int remainingGuesses;
 
+    public Client(String username) throws RemoteException {
+            super();
+            try{
+            this.username = username;
+            this.broadcastHandler = new BroadcastHandler(username);
+          Naming.rebind("rmi://localhost/" + username + "_Client", this);
+            }
+           catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
 
-    public Client() throws RemoteException {
-        super();
-        gameID = -1;
-        currentSequence = 0;
-        supressHeartbeat = false;
     }
 
     public static void main(String[] args) throws RemoteException {
-     
-        Client client = new Client();
-        Boolean exitFlag = false;
-        String option;
 
         try {
-            client.server = (CrissCrossPuzzleInterface)Naming.lookup("rmi://localhost:1099/Server");
-            client.accountService = (AccountServiceInterface)Naming.lookup("rmi://localhost:1099/AccountService");
-            client.scoreboard = (ScoreboardInterface)Naming.lookup("rmi://localhost:1099/ScoreboardService");
+            System.out.println("Enter your username: ");
+            String username = new BufferedReader(new InputStreamReader(System.in)).readLine();
+            Client client = new Client(username);
+            client.run();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
-            client.userSignIn();
+    private void run() {
+        try {
+            server = (CrissCrossPuzzleInterface) Naming.lookup("rmi://localhost:1099/Server");
+            showMainMenu();
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
 
-            while(!exitFlag) {
-                System.out.println(Constants.MAIN_MENU_MESSAGE);
-                option = System.console().readLine();
-    
-               switch (option) {
-                    case "1":
-                        System.out.println("\nStarting a new game...");
-                        client.startGame();
-                        break;
+    private void showMainMenu() {
+        while (!gameOverFlag) {
+            System.out.println(Constants.MAIN_MENU_MESSAGE);
+            try {
+                int choice = Integer.parseInt(System.console().readLine());
+                handleMenuChoice(choice);
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input!");
+            }
 
-                    case "2":
-                        System.out.println("\nJoining a game...");
-                        client.joinGame();
-                        break;
-                
-                    case "3":
-                        System.out.println("\nViewing statistics...");
-                        client.viewStats();
-                        break;
+        }
+    }
 
-                    case "4":
-                        System.out.println("\nViewing leaderboard...");
-                        client.viewScoreboard();
-                        break;
-    
-                    case "5":
-                        System.out.println("\nModifying word repository...");
-                        client.modifyWordRepo();
-                        break;
-    
-                    case "6":
-                        System.out.println("\nGoodbye!");
-                        client.handleExit();
-                        exitFlag = true;
-                        break;
+    private void handleMenuChoice(int choice) {
+        switch (choice) {
+            case 1:
+                startNewGame();
+                break;
+            case 2:
+                joinExistingGame();
+                break;
+            case 3:
+                modifyWordRepository();
+                break;
+            case 4:
+                exitGame();
+                break;
+            default:
+                System.out.println("Invalid choice!");
+
+        }
+    }
+
+    private void startNewGame() {
+        System.out.println("Enter desired number of words");
+        int numWords = Integer.parseInt(System.console().readLine());
+
+        System.out.println("Enter desired number of players");
+        int numOfPlayers = Integer.parseInt(System.console().readLine());
+
+        gameID = server.startGame(username, null, numWords, numOfPlayers); // fix
+        broadcastHandler.broadcast("JOIN", gameID);
+        waitForGameStart();
+
+    }
+
+    private void joinExistingGame() {
+        System.out.println("Enter game ID: ");
+        int targetGameID = Integer.parseInt(System.console().readLine());
+
+        if (server.joinGame(targetGameID, username)) {
+            gameID = targetGameID;
+            broadcastHandler.broadcast("JOIN_ACK", gameID);
+            waitForGameStart();
+        }
+    }
+
+    private void waitForGameStart() throws InterruptedException {
+        synchronized (this) {
+            while (!gameOverFlag) {
+                wait();
+            }
+            startGameSession();
+        }
+    }
+
+    private void startGameSession() {
+        new Thread(this::handleGameInput).start();
+        new Thread(this::processMessages).start();
+    }
+
+    private void handleGameInput(){
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+            while (!gameOverFlag) {
+                if (reader.ready()) {
+                    String input = reader.readLine();
+                    handleGameCommand(input);
                 }
+                Thread.sleep(100); //so they dont spam
             }
-
-        } catch (Exception e) {
-            client.handleExit();
-            System.out.println("Error: " + e.getMessage());
-            e.printStackTrace();
-        }
-        
     }
 
+    private void handleGameCommand(String input) throws RemoteException{
+        if(input.equals("~")){
+            exitGame();
+        }
+        else if(input.startsWith("?")){
+            checkWord(input.substring(1));
+        }
+        else 
+        broadcastHandler.broadcast("GUESS", input);
+    }
 
-    /**
-     * Prompts the user to sign in and register them with the account service if
-     * they haven't already been registered.
+    @Override
+    public void receive(BroadcastHandler.Message message) throws RemoteException{
+        broadcastHandler.receive(message);
+    }
+
+    private void processMessages() {
+        while (!gameOverFlag) {
+            BroadcastHandler.Message msg = broadcastHandler.getNextMessage();
+            if (msg != null) processMessage(msg);
+        }
+    }
+
+    private void processMessage(BroadcastHandler.Message msg){
+        switch (msg.type) {
+            case "GUESS": processGuess(msg); break;
+            case "STATE": updateState(msg); break;
+            case "JOIN": handlePlayerJoin(msg); break;
+        }
+
+    }
+
+    private void processGuess(BroadcastHandler.Message msg) {
+        String guess = (String) msg.contents;
+        System.out.println("Processing guess from " + msg.senderID + ": " + guess);
+
+        //to do
+
+        broadcastHandler.broadcast("STATE_UPDATE", currentPuzzle);
+    }
+
+    private void updateState(BroadcastHandler.Message msg) {
+        this.currentPuzzle = (char[][]) msg.contents;
+        renderPuzzle();
+    }
+
+        /**
+     * Prints the given puzzle to the console.
      *
-     * @throws RemoteException if an error occurs when calling the account service
+     * @param puzzle the 2D array to print
      */
-    private void userSignIn() {
+    private void renderPuzzle() {
 
-        try {
-            System.out.println(Constants.USER_SIGN_IN_MESSAGE);
-            this.username = System.console().readLine();
-
-            if(accountService.registerUser(username)){
-                System.out.println("\nWelcome, " + username + "!");
-            } else {
-                System.out.println("\nWelcome back, " + username + "!");
+        for (int i = 0; i < currentPuzzle.length; i++) {
+            for (int j = 0; j < currentPuzzle[i].length; j++) {
+                System.out.print(currentPuzzle[i][j]);
             }
-            
-        } catch (RemoteException e) {
-            e.printStackTrace();
+            System.out.println();
         }
     }
 
-    /**
-     * Starts a new game by prompting the user for the number of words in the
-     * puzzle and the failed attempt factor, and then waits for other players to
-     * join or for the user to press a key to start the game.
-     *
-     * @throws RemoteException if an error occurs when calling the server
-     */
-    private void startGame() {
-
-        gameStartFlag = false;
-
-        System.out.println("\nHow many words would you like in the puzzle? (Enter a number between 2 and 5)");
-        String numWords = System.console().readLine();
-
-        while (!numWords.matches("[2-5]")) {
-            System.out.println("Invalid input.");
-            System.out.println("\nHow many words would you like in the puzzle? (Enter a number between 2 and 5)");
-            numWords = System.console().readLine();
-        }
-
-        System.out.println("\nEnter a failed attempt factor (Enter a number between 1 and 5)");
-        String failedAttemptFactor = System.console().readLine();
-
-        while (!failedAttemptFactor.matches("[1-5]")) {
-            System.out.println("Invalid input.");
-            System.out.println("\nEnter a failed attempt factor (Enter a number between 1 and 5)");
-            failedAttemptFactor = System.console().readLine();
-        }
-
+    private void exitGame() {
         try {
-            gameID = server.startGame(this.username, this, Integer.valueOf(numWords), Integer.valueOf(failedAttemptFactor));
-            System.out.println("\nStarted game with ID: " + gameID + "\n" + Constants.GAME_START_MESSAGE);
-
-            while (true) {
-                if (System.console().readLine().equals("~")) return; else break;
-            }
-
-            server.issueStartSignal(gameID);
-            System.out.println("It's your turn!\n");
-            printPuzzle(server.getInitialPuzzle(gameID));
-            System.out.println("Counter: " + server.getGuessCounter(gameID) + "\nWord guessed: 0");
-            this.currentSequence = server.getSequence(username, gameID);
-            System.out.println("[Test] Current sequence: " + this.currentSequence);
-            myTurn = true;
-            playGame();
-
+            broadcastHandler.broadcast("LEAVE", gameID);
+            server.playerQuit(gameID, username);
+            //go back to main menu or something
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("Error: " + e.getMessage());
+        e.printStackTrace();
         }
     }
+
+
+
+
+
+
+  
+
 
     /**
      * Allows the user to join an existing game by entering a valid game ID.
@@ -203,310 +257,7 @@ public class Client extends UnicastRemoteObject implements ClientCallbackInterfa
         }
     }
 
-    /**
-     * Called by the server when the game is ready to start. This method is
-     * synchronized because it is called from a separate thread, and notifies
-     * the waiting thread that the game has started.
-     * 
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    public synchronized void onGameStart() throws RemoteException {
-        System.out.println("\nGame has started!");
-        notifyAll();
-    }
-
-    /**
-     * Called by the server when a new player joins the game. This method notifies
-     * the player of the new player and the updated total number of players.
-     *
-     * @param player the name of the player who joined
-     * @param numPlayers the updated number of players in the game
-     * @throws RemoteException if an error occurs during communication with the 
-     *         server
-     */
-    @Override
-    public void onPlayerJoin(String player, Integer numPlayers) throws RemoteException {
-        System.out.println("\nPlayer: " + player + " has joined the game. Total players: " + numPlayers);
-    }
-
-    /**
-     * Called by the server when a player quits the game. This method notifies
-     * the player of the player who quit and the updated total number of players.
-     * 
-     * @param player the name of the player who quit
-     * @param numPlayers the updated number of players in the game
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    public void onPlayerQuit(String player, Integer numPlayers) throws RemoteException {
-        System.out.println("\nPlayer: " + player + " has quit the game. Players remaining: " + numPlayers);
-    }
-
-    /**
-     * This method initiates and manages the main game loop for the client.
-     * It starts a separate thread to listen for the user input to quit the game.
-     * The game runs in a loop until a game-over condition is met.
-     * 
-     * The client takes turns guessing words or letters, and interacts with the server
-     * to check word existence and submit guesses. If the client inputs a '~',
-     * it indicates quitting the game.
-     * 
-     * The method handles synchronization to wait for the player's turn
-     * and manages game state flags to control the game flow.
-     */
-    private void playGame() {
-
-        gameOverFlag = false;
-        supressHeartbeat = false;
-
-        Thread heartbeatThread = new Thread(() -> {
-
-            while (!gameOverFlag) {
-
-                try {
-
-                    if (username != null && !supressHeartbeat) {
-                        server.playerHeartbeat(gameID, username);
-                    }
-
-                    Thread.sleep(1000);
-                    
-                } catch (Exception e) {
-                    System.out.println("Failed to send heartbeat.");
-                }
-            }
-        });
-
-        heartbeatThread.start();
-        
-        Thread monitorThread = new Thread(() -> {
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-
-            try {
-                while (!gameOverFlag) {
-
-                    if (reader.ready()) {
-
-                        String input = reader.readLine();
-
-                        if (input.equals("~")) {
-
-                            System.out.println("Left game ID: " + gameID);
-                            gameOverFlag = true;
-                            myTurn = false;
-                            server.playerQuit(gameID, this.username);
-                            gameID = -1;
-                            synchronized (this) {notifyAll();}
-                            break;
-
-                        } else if (input.equals("\\")) {
-
-                            supressHeartbeat = !supressHeartbeat;
-                            System.out.println("[Test] Heartbeat " + (supressHeartbeat ? "suppressed" : "resumed"));
-                        }
-                    } else {
-                        Thread.sleep(100);
-                    }
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-
-        monitorThread.start();
-        
-        try {
-            while(!gameOverFlag){
-
-                if(myTurn) {
-
-                    String guess = getValidGuess();
-
-                    while (!guess.equals("~") && !guess.equals("\\")){
-
-                        if (guess.charAt(0) == '?'){
-
-                            if(server.checkWord(guess.substring(1))){
-                                System.out.println("\nWord '" + guess.substring(1) + "' exists in the word repository.");
-                            } else {
-                                System.out.println("\nWord '" + guess.substring(1) + "' does not exist in the word repository.");
-                            }
-
-                            guess = getValidGuess();
-
-                        } else {
-                            
-                            myTurn = false;
-
-                            currentSequence = server.getSequence(username, gameID);
-                            
-                            //System.out.println("[Test] Current sequence: " + currentSequence);
-
-                            // 50% chance of repeating the same sequence number
-                            if (Math.random() < 0.5) {
-                                System.out.println("[Test] Simulating duplicate request with sequence: " + currentSequence);
-                            } else {
-                                currentSequence++;
-                            }
-
-                            Boolean accepted = server.playerGuess(this.username, gameID, guess, currentSequence);
-
-                            if (!accepted) {
-                                System.out.println("[Test] Server ignored duplicate guess. Trying again...");
-                                myTurn = true;
-                                continue;
-                            }
-                            
-                            break;
-                        }
-                    }
-                    
-                    if (guess.equals("~")){
-                        gameOverFlag = true;
-                        myTurn = false;  //maybe?
-                        server.playerQuit(gameID, this.username);
-                        gameID = -1;
-                        return;
-                    } else if (guess.equals("\\")){
-                        supressHeartbeat = !supressHeartbeat;
-                        System.out.println("[Test] Heartbeat " + (supressHeartbeat ? "suppressed" : "resumed"));
-                    }
-                }
-
-                if(!gameOverFlag && !myTurn) synchronized (this){wait();}  
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            try {
-                monitorThread.join(2000);
-                heartbeatThread.join(2000);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-    
-    /**
-     * Called by the server when it's the client's turn. This method notifies
-     * the client of the updated game state and enables the client to make a
-     * guess. The client is notified of the updated puzzle state, the number
-     * of guesses left, and the number of words guessed by all players.
-     * 
-     * @param puzzle the current state of the puzzle
-     * @param guessCounter the number of guesses left
-     * @param wordCounter the number of words guessed by all players
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    @Override
-    public synchronized void onYourTurn(char[][] puzzle, Integer guessCounter, Integer wordCounter) throws RemoteException {
-        System.out.println("\nIt's your turn!\n");
-        printPuzzle(puzzle);
-        System.out.println("Counter: " + guessCounter
-                        + "\nWord guessed: " + wordCounter);
-        System.out.println("[Test] Current sequence: " + this.currentSequence);
-        myTurn = true;
-        notifyAll();
-    }
-
-    /**
-     * Called by the server when it is the opponent's turn. This method notifies
-     * the client of the updated game state and informs them to wait for their turn.
-     * The client is updated with the current puzzle state, the number of guesses
-     * left, and the number of words guessed by all players.
-     *
-     * @param puzzle the current state of the puzzle
-     * @param guessCounter the number of guesses left
-     * @param wordCounter the number of words guessed by all players
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    @Override
-    public synchronized void onOpponentTurn(char[][] puzzle, Integer guessCounter, Integer wordCounter) throws RemoteException {
-        System.out.println("\nIt's your opponent's turn!\n");
-        printPuzzle(puzzle);
-        System.out.println("Counter: " + guessCounter
-                        + "\nWord guessed: " + wordCounter
-                        + "\nPlease wait for your turn. (enter ~ to quit)");
-        myTurn = false;
-    }
-
-    /**
-     * Called by the server when the game has been won. This method
-     * notifies the client of the final game state and the final scores
-     * of all players. The client is informed that the game is over and
-     * the final puzzle state is displayed. The client is also notified
-     * of the final scores of all players.
-     *
-     * @param puzzle the final state of the puzzle
-     * @param guessCounter the number of guesses left
-     * @param wordCounter the number of words guessed by all players
-     * @param scores the final scores of all players
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    @Override
-    public synchronized void onGameWin(char[][] puzzle, Integer guessCounter, Integer wordCounter, Map<String, Integer> scores) throws RemoteException {
-
-        gameOverFlag = true;
-        gameID = -1;
-
-        System.out.println("\nPuzzle completed!");
-        printPuzzle(puzzle);
-        System.out.println("Counter: " + guessCounter
-                        + "\nWord guessed: " + wordCounter
-                        + "\n\nFinal scores:\n");
-
-        for (String player : scores.keySet()) System.out.println(player + ": " + scores.get(player));
-        notifyAll();
-    }
-
-    /**
-     * Called by the server when the game has been lost. This method
-     * notifies the client of the final game state and the final scores
-     * of all players. The client is informed that the game is over and
-     * the final puzzle state is displayed. The client is also notified
-     * of the final scores of all players.
-     *
-     * @param puzzle the final state of the puzzle
-     * @param guessCounter the number of guesses left
-     * @param wordCounter the number of words guessed by all players
-     * @param scores the final scores of all players
-     * @throws RemoteException if an error occurs during communication with the
-     *         server
-     */
-    public void onGameLoss(char[][] puzzle, Integer guessCounter, Integer wordCounter , Map<String, Integer> scores) throws RemoteException {
-        
-        gameOverFlag = true;
-        gameID = -1;
-
-        printPuzzle(puzzle);
-        System.out.println("Counter: " + guessCounter
-                        + "\nWord guessed: " + wordCounter
-                        + "\n\nGame lost. Final scores:\n");
-
-        for (String player : scores.keySet()) System.out.println(player + ": " + scores.get(player));
-        notifyAll();
-    }
-
-    /**
-     * Prints the given puzzle to the console.
-     *
-     * @param puzzle the 2D array to print
-     */
-    private void printPuzzle(char[][] puzzle) {
-
-        for (int i = 0; i < puzzle.length; i++) {
-            for (int j = 0; j < puzzle[i].length; j++) {
-                System.out.print(puzzle[i][j]);
-            }
-            System.out.println();
-        }
-    }
-
+ 
     /**
      * Prompts the user for a letter guess and ensures it is valid. Valid guesses
      * are strings of letters, the string "?", or the string "~". If the user
@@ -613,44 +364,6 @@ public class Client extends UnicastRemoteObject implements ClientCallbackInterfa
         }
     }
 
-    /**
-     * Displays the user's current score.
-     * 
-     * @throws RemoteException if an error occurs when calling the account service
-     */
-    private void viewStats(){
-
-        try {
-            System.out.println("Your current score is: " + accountService.getUserScore(username));
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * Displays up to the top 5 scores from the scoreboard.
-     * 
-     * @throws RemoteException if an error occurs when calling the scoreboard
-     */
-    private void viewScoreboard(){
-
-        try {
-            List<Map.Entry<String, Integer>> topN = scoreboard.getScores(5);
-
-            if(topN.isEmpty()){
-                System.out.println("Scoreboard empty");
-            } else {
-
-                System.out.println("\nScoreboard (top " + topN.size() + "):\n");
-
-                for (Map.Entry<String, Integer> entry : topN) {
-                    System.out.println(entry.getKey() + ": " + entry.getValue());
-                }
-            }
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-    }
 
     /**
      * Handles the client's disconnection. If the user was in an active game, it
@@ -672,16 +385,6 @@ public class Client extends UnicastRemoteObject implements ClientCallbackInterfa
             e.printStackTrace();
         }
     }
-
-    public void onPlayerTimeout(String player, Boolean suspected, Boolean failed) throws RemoteException {
-
-        if(suspected){
-            System.out.println("Opponent " + player + " has timed out. (suspected: " + suspected + ", failed: " + failed + ")");
-        
-        } else if(failed){
-            System.out.println("Opponent " + player + " has timed out. (suspected: " + suspected + ", failed: " + failed + ")");
-        }
-
     }
 
     

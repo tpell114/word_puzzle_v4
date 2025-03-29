@@ -12,11 +12,8 @@ public class PuzzleObject {
     private Integer numWords;
     private Integer difficultyFactor;
     private Integer guessCounter;
-    private Map<String, ClientCallbackInterface> players = new LinkedHashMap<>();
-    private ConcurrentHashMap<String, Long> playerHeartbeats = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, String> playerStatus = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, Integer> playerSequences = new ConcurrentHashMap<>();
-    private Map<String, Integer> scores = new LinkedHashMap<>(); // <username, words guessed>
     private String activePlayer;
     private String stem;
     private List<String> horizontalWords = new ArrayList<>();
@@ -24,9 +21,7 @@ public class PuzzleObject {
     private char[][] puzzleMaster;
     private char[][] puzzleSlave;
 
-    public PuzzleObject(String username, ClientCallbackInterface client, Integer gameID, Integer numWords, Integer difficultyFactor) {
-        this.players.put(username, client);
-        this.scores.put(username, 0);
+    public PuzzleObject(String username, Integer gameID, Integer numWords, Integer difficultyFactor) {
         this.activePlayer = username;
         this.gameID = gameID;
         this.numWords = numWords;
@@ -44,9 +39,7 @@ public class PuzzleObject {
      * @param username The username of the player to add.
      * @param client The ClientCallbackInterface the player will use to receive updates.
      */
-    public void addPlayer(String username, ClientCallbackInterface client){
-        this.players.put(username, client);
-        this.scores.put(username, 0);
+    public void addPlayer(String username){
         this.playerStatus.put(username, "active");
         this.playerSequences.put(username, 0);
     }
@@ -79,7 +72,6 @@ public class PuzzleObject {
 
                     if(slaveRow.equals(masterRow) && horizontalWords.contains(slaveRow) && !completedWords.contains(slaveRow)){
                         completedWords.add(slaveRow);
-                        scores.put(username, scores.get(username) + 1);
                         System.out.println("Added 1 word guessed to: " + username);
                     }
 
@@ -95,7 +87,6 @@ public class PuzzleObject {
 
                     if (slaveColumn.equals(masterColumn) && !completedWords.contains(slaveColumn)){
                         completedWords.add(slaveColumn);
-                        scores.put(username, scores.get(username) + 1);
                         System.out.println("Added 1 word guessed to: " + username);
                     }
                 }
@@ -133,7 +124,6 @@ public class PuzzleObject {
 
             if(!completedWords.contains(stem)){
                 completedWords.add(stem);
-                scores.put(username, scores.get(username) + 1);
                 System.out.println("Added 1 word guessed to: " + username);
             }
 
@@ -154,7 +144,6 @@ public class PuzzleObject {
 
                     if(!completedWords.contains(guess)){
                         completedWords.add(guess);
-                        scores.put(username, scores.get(username) + 1);
                         System.out.println("Added 1 word guessed to: " + username);
                     }
                 }
@@ -177,41 +166,8 @@ public class PuzzleObject {
         return activePlayer;
     }
 
-    /**
-     * Gets the callback interface of the player whose turn it currently is.
-     * 
-     * @return The callback interface of the active player.
-     */
-    public ClientCallbackInterface getActivePlayerCallback(){
-        return players.get(activePlayer);
-    }
+ 
 
-    /**
-     * Gets a map of all players in the game and their corresponding callback interfaces. The keys are the usernames of the players, and the values are the callback interfaces that the server can use to notify players of events.
-     * 
-     * @return A map of all players in the game and their callback interfaces.
-     */
-    public Map<String, ClientCallbackInterface> getAllPlayers(){
-        return new LinkedHashMap<>(players);
-    }
-
-    /**
-     * Increments the active player to the next player in the list of players
-     * registered in the game. If the list is empty, does nothing.
-     * 
-     * @see #getActivePlayer()
-     */
-    public void incrementActivePlayer() {
-        
-        List<String> keys = new ArrayList<>(players.keySet());
-
-        if (!keys.isEmpty()) {
-            int currentIndex = keys.indexOf(activePlayer);
-            int nextIndex = (currentIndex + 1) % keys.size();
-            activePlayer = keys.get(nextIndex);
-            System.out.println("Next player: " + activePlayer);
-        }
-    }
     
     /**
      * Retrieves the current number of guesses remaining for the game.
@@ -366,49 +322,15 @@ public class PuzzleObject {
      * @param username the username of the player to be removed
      * @return true if the game is now empty, false otherwise
      */
-    public Boolean removePlayer(String username){
+    public void removePlayer(String username){
 
-        this.players.remove(username);
-        this.scores.remove(username);
         this.playerStatus.remove(username);
 
-        if(this.players.isEmpty()){
-            return true;
-        }
 
-        return false;
+        return;
     }
 
-    /**
-     * Retrieves the number of words guessed by a specific player.
-     *
-     * @param username the username of the player whose score is to be retrieved
-     * @return the number of words guessed by the player, or null if the player
-     *         is not found
-     */
-    public Integer getWordsGuessed(String username){
-        return this.scores.get(username);
-    }
-
-    /**
-     * Retrieves a list of the players with the highest score in the game.
-     * 
-     * @return a list of the top players, or an empty list if there are no
-     *         players
-     */
-    public List<String> getHighestScoredPlayers(){
-
-        int highestScore = Collections.max(scores.values());
-        List<String> topPlayers = new ArrayList<>();
-
-        for (String player : scores.keySet()) {
-            if (scores.get(player) == highestScore) {
-                topPlayers.add(player);
-            }
-        }
-
-        return topPlayers;
-    }
+ 
 
     /**
      * Retrieves a map of all players in the game and their scores.
@@ -416,18 +338,6 @@ public class PuzzleObject {
      * @return a map of all players and their scores, or an empty map if there
      *         are no players
      */
-    public Map<String, Integer> getAllScores(){
-        return new LinkedHashMap<>(scores);
-    }
-
-
-    public void updateHeartbeat(String username){
-        this.playerHeartbeats.put(username, System.nanoTime());
-    }
-
-    public Long getPlayerHeartbeat(String username){
-        return this.playerHeartbeats.get(username);
-    }
 
     public String getPlayerStatus(String username){
         return this.playerStatus.get(username);
