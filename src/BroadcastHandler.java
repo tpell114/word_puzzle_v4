@@ -8,7 +8,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroadcastInterface {
     private int lamportClock = 0;
     private final PriorityQueue<Message> messageQueue = new PriorityQueue<>(); //keep messages ordered 
-    private final Map<String, Integer> lastSequence = new ConcurrentHashMap<>();
     private final String peerID;
     private final ConcurrentHashMap<String, RemoteBroadcastInterface> peers = new ConcurrentHashMap<>();
 
@@ -29,11 +28,9 @@ public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroad
 
     public synchronized void broadcast(String type, Object contents) throws  RemoteException{
         lamportClock ++;
-        int sequence = lastSequence.getOrDefault(peerID, 0) + 1;
-        Message msg = new Message(lamportClock, peerID, sequence, type, contents);
+        Message msg = new Message(lamportClock, peerID, type, contents);
 
         messageQueue.add(msg);
-        lastSequence.put(peerID, sequence);
 
         for(RemoteBroadcastInterface peer : peers.values()){
             peer.receive(msg);
@@ -52,23 +49,20 @@ public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroad
 
     private void processQueue(){
         while(!messageQueue.isEmpty()){
-            Message head = messageQueue.peek();
-            if(canDeliver(head)){
+            Message head = messageQueue.poll();
                 deliver(head);
-                messageQueue.remove();
             }
-            else{
-                break;
-            }
+            
         }
-    }
 
-    private  boolean canDeliver(Message message){
-        return lastSequence.getOrDefault(message.senderID, 0) + 1 == message.sequence;
-    }
+        public synchronized Message getNextMessage() {
+            return messageQueue.poll();
+        }
+    
+
 
     public  void deliver(Message head){
-        System.out.println(head);
+        System.out.println("Delivering:" + head);
     }
 
 
@@ -77,14 +71,12 @@ public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroad
     public static class Message implements  Comparable<Message>{
         public final int timeStamp;
         public final String senderID;
-        public final int sequence;
         public final String type; //indicates what command to do
         public final Object contents;
 
-        public Message(int t, String s, int seq, String ty, Object c){
+        public Message(int t, String s, String ty, Object c){
             timeStamp = t; 
             senderID = s; 
-            sequence = seq; 
             type = ty; 
             contents = c;
         }

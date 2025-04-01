@@ -7,10 +7,10 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
 
     ConcurrentHashMap<Integer, PuzzleObject> gamesMap = new ConcurrentHashMap<>();
 
-    private WordRepositoryInterface wordRepo;
+   // private WordRepositoryInterface wordRepo;
     private GameState currentGame = null;
     private PuzzleObject initialPuzzle;
-    private final BroadcastHandler broadcastHandler;
+    private  BroadcastHandler broadcastHandler;
     private String username;
 
     protected Server() throws RemoteException {
@@ -19,7 +19,7 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
             this.username = "SERVER";
             this.broadcastHandler = new BroadcastHandler(username);
             Naming.rebind("rmi://localhost/" + username + "_Client", this);
-            wordRepo = (WordRepositoryInterface) Naming.lookup("rmi://localhost/WordRepository");
+          //  wordRepo = (WordRepositoryInterface) Naming.lookup("rmi://localhost/WordRepository");
         }
 
          catch (Exception e) {
@@ -106,6 +106,18 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
         return references;
     }
 
+    public synchronized Boolean isGameReady(Integer gameID) throws RemoteException {
+        return currentGame != null && currentGame.getGameID() == gameID && currentGame.isReadyToStart();
+    }
+
+    public synchronized Integer getPlayerCount(Integer gameID) throws RemoteException {
+        return currentGame.getPlayerCount();
+    }
+
+     public char[][] getInitialPuzzle(Integer gameID) throws RemoteException {
+        return gamesMap.get(gameID).getPuzzleSlaveCopy();
+    }
+
     private static class GameState {
         private final int gameID;
         private final int numWords;
@@ -118,7 +130,7 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
             this.requiredPlayers = requiredPlayers;
             this.players.add(creator);
         }
-s
+
         public boolean addPlayer(String player) {
             if (players.size() < requiredPlayers) {
                 return players.add(player);
@@ -142,15 +154,14 @@ s
             return players.size();
         }
 
-        public int getGameId() {
+
+        public int getGameID() {
             return gameID;
         }
 
     }
 
-    public char[][] getInitialPuzzle(Integer gameID) throws RemoteException {
-        return gamesMap.get(gameID).getPuzzleSlaveCopy();
-    }
+   
 
 }
 
