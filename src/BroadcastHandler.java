@@ -5,7 +5,7 @@ import java.util.PriorityQueue;
 import java.util.concurrent.ConcurrentHashMap;
 
 
-public class BroadcastHandler extends UnicastRemoteObject {
+public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroadcastInterface {
     private int lamportClock = 0;
     private final PriorityQueue<Message> messageQueue = new PriorityQueue<>(); //keep messages ordered 
     private final Map<String, Integer> lastSequence = new ConcurrentHashMap<>();
@@ -35,13 +35,15 @@ public class BroadcastHandler extends UnicastRemoteObject {
         messageQueue.add(msg);
         lastSequence.put(peerID, sequence);
 
-        for(Map.Entry<String, RemoteBroadcastInterface> entry : peers.entrySet()){
-                entry.getValue().receive(msg);
-            }
+        for(RemoteBroadcastInterface peer : peers.values()){
+            peer.receive(msg);
+        }
     
     
         }
 
+
+        @Override
     public synchronized  void receive(Message message) throws RemoteException{
         lamportClock = Math.max(lamportClock, message.timeStamp) + 1;
         messageQueue.add(message);
@@ -65,21 +67,12 @@ public class BroadcastHandler extends UnicastRemoteObject {
         return lastSequence.getOrDefault(message.senderID, 0) + 1 == message.sequence;
     }
 
-    private void deliver(Message message){
-        switch(message.type){
-            case "GUESS":
-            handleGuess(message);
-            break;
-            case "STATE_UPDATE":
-            updateState(message);
-            break;
-            case "JOIN":
-            handleJoin(message);
-            break;
-        }
-        lastSequence.put(message.senderID, message.sequence);
+    public  void deliver(Message head){
+        System.out.println(head);
     }
-    
+
+
+
 
     public static class Message implements  Comparable<Message>{
         public final int timeStamp;

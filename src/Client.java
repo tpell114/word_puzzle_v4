@@ -6,7 +6,7 @@ import java.util.concurrent.*;
 
 public class Client extends UnicastRemoteObject implements RemoteBroadcastInterface {
 
-    private final BroadcastHandler broadcastHandler;
+    private BroadcastHandler broadcastHandler;
     private CrissCrossPuzzleInterface server;
     private String username;
     private Integer gameID = -1;
@@ -102,9 +102,16 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
         System.out.println("Enter game ID: ");
         int targetGameID = Integer.parseInt(System.console().readLine());
 
+        if(server.isReadyToStart()){
+            System.out.println("Unfortunatly " + (server.getPlayerCount + 1) + " is a crowd");
+
+        }
+
         if (server.joinGame(targetGameID, username)) {
             gameID = targetGameID;
-            broadcastHandler.broadcast("JOIN_ACK", gameID);
+
+            char[][] initialPuzzle = server.getInitialPuzzle(gameID);
+            broadcastHandler.broadcast("JOIN", gameID);
             waitForGameStart();
         }
     }
@@ -169,10 +176,22 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
     private void processGuess(BroadcastHandler.Message msg) {
         String guess = (String) msg.contents;
         System.out.println("Processing guess from " + msg.senderID + ": " + guess);
-
+        boolean solved;
+        if(guess.length() == 1){
+            solved = puzzle.guessChar(msg.senderID, guess.charAt(0));
+        }
+        else{
+            solved = puzzle.guessWord(msg.senderID, guess);
+        }
+        currentPuzzle = puzzle.getPuzzleSlaveCopy();
+        renderPuzzle();
+        if(solved || puzzle.getGuessCounter() <= 0){
+            gameOverFlag = true;
+        }
+        
         //to do
 
-        broadcastHandler.broadcast("STATE_UPDATE", currentPuzzle);
+        broadcastHandler.broadcast("STATE", currentPuzzle);
     }
 
     private void updateState(BroadcastHandler.Message msg) {

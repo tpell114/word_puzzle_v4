@@ -217,7 +217,7 @@ public class PuzzleObject {
         try {
             this.wordRepo = (WordRepositoryInterface) Naming.lookup("rmi://localhost/WordRepository");
             this.stem = this.wordRepo.getWord((this.numWords - 1) * 2);
-            this.guessCounter = this.stem.length() * difficultyFactor;
+            this.guessCounter = this.stem.length() * 100; //hardcoded guesses
 
             String word;
             for (int i = 0; i < stem.length(); i += 2) {
