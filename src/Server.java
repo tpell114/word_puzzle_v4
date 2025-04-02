@@ -48,9 +48,9 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
             throw new RemoteException("A game is already in progess");
         }
         
-        currentGame = new GameState(numWords, numberOfPlayers, username);
+        currentGame = new GameState(this, numWords, numberOfPlayers, username);
         gamesMap.put(1,new PuzzleObject(username, 1, numWords, 100));
-        broadcastHandler.broadcast("STATE", getInitialPuzzle(1));
+        broadcastHandler.broadcast("STATE", getGameState());
 
     }
 
@@ -107,7 +107,7 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
     }
 
     public synchronized Boolean isGameReady(Integer gameID) throws RemoteException {
-        return currentGame != null && currentGame.getGameID() == gameID && currentGame.isReadyToStart();
+        return currentGame != null && currentGame.getGameID() == gameID && !currentGame.isReadyToStart();
     }
 
     public synchronized Integer getPlayerCount(Integer gameID) throws RemoteException {
@@ -118,22 +118,38 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
         return gamesMap.get(gameID).getPuzzleSlaveCopy();
     }
 
-    private static class GameState {
+    private class GameState {
+        private final Server server;
         private final int gameID;
         private final int numWords;
         private final int requiredPlayers;
         private final Set<String> players = new HashSet<>();
 
-        public GameState(int numWords, int requiredPlayers, String creator) {
+        public GameState(Server server, int numWords, int requiredPlayers, String creator) {
+            this.server = server;
             this.gameID = 1;
             this.numWords = numWords;
             this.requiredPlayers = requiredPlayers;
             this.players.add(creator);
         }
+    
+
 
         public boolean addPlayer(String player) {
             if (players.size() < requiredPlayers) {
-                return players.add(player);
+                boolean added = players.add(player);
+                if (players.size() == requiredPlayers) {
+                    try {
+                        Map<String, RemoteBroadcastInterface> playerRefs = server.getPlayerReferences();
+                        for (Map.Entry<String, RemoteBroadcastInterface> entry : playerRefs.entrySet()) {
+                            server.broadcastHandler.addPeer(entry.getKey(), entry.getValue());
+                        }
+                        server.broadcastHandler.broadcast("GAMESTART", gameID);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                return added;
             }
             return false;
         }
@@ -143,7 +159,7 @@ public class Server extends UnicastRemoteObject implements CrissCrossPuzzleInter
         }
 
         public boolean isReadyToStart() {
-            return players.size() == requiredPlayers;
+            return players.size() < requiredPlayers;
         }
 
         public List<String> getPlayerList() {

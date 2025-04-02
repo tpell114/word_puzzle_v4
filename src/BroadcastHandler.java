@@ -1,3 +1,4 @@
+import java.io.Serializable;
 import  java.rmi.*;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.Map;
@@ -29,9 +30,6 @@ public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroad
     public synchronized void broadcast(String type, Object contents) throws  RemoteException{
         lamportClock ++;
         Message msg = new Message(lamportClock, peerID, type, contents);
-
-        messageQueue.add(msg);
-
         for(RemoteBroadcastInterface peer : peers.values()){
             peer.receive(msg);
         }
@@ -62,13 +60,13 @@ public class BroadcastHandler extends UnicastRemoteObject implements RemoteBroad
 
 
     public  void deliver(Message head){
-        System.out.println("Delivering:" + head);
+        System.out.println("Delivering:" + head.contents);
     }
 
 
 
 
-    public static class Message implements  Comparable<Message>{
+    public static class Message implements  Comparable<Message>, Serializable{
         public final int timeStamp;
         public final String senderID;
         public final String type; //indicates what command to do

@@ -12,8 +12,8 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
     private String username;
     private Integer gameID = -1;
     private volatile Boolean gameOverFlag = false;
+    private volatile Boolean gameStarted = false;
     private char[][] currentPuzzle;
-    private int remainingGuesses;
     private PuzzleObject puzzle;
 
     public Client(String username) throws RemoteException {
@@ -23,6 +23,7 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
             this.broadcastHandler = new BroadcastHandler(username);
             wordRepo = (WordRepositoryInterface) Naming.lookup("rmi://localhost/WordRepository");
             Naming.rebind("rmi://localhost/" + username + "_Client", this);
+            new Thread(this::processMessages).start();
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
@@ -112,42 +113,57 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
         System.out.println("Enter game ID: ");
         int targetGameID = Integer.parseInt(System.console().readLine());
         try {
-            if (server.isGameReady(targetGameID)) {
-                int i = server.getPlayerCount(targetGameID);
-                i++;
-                System.out.println("Unfortunatly " + i + " is a crowd");
-
-            }
-
-            if (server.joinGame(targetGameID, username)) {
-                gameID = targetGameID;
+            if (!server.isGameReady(targetGameID)) { // Fix condition
+                if (server.joinGame(targetGameID, username)) {
+                    gameID = targetGameID;
 
 
-                char[][] currentPuzzle = server.getInitialPuzzle(gameID);
-                broadcastHandler.broadcast("JOIN", gameID);
-                waitForGameStart();
+                    //Need help here
+                    char[][] puzzleSlave = server.getInitialPuzzle(gameID);
+                    this.puzzle = new PuzzleObject(gameID);
+                    this.puzzle.initPuzzleSlave(puzzleSlave);
+
+
+
+                    broadcastHandler.broadcast("JOIN", gameID);
+                    waitForGameStart();
+                }
+            } else {
+                System.out.println("Game is already full or running.");
             }
         } catch (Exception e) {
-            System.out.println("Error joining an existing game");
+            System.out.println("Error joining game: " + e.getMessage());
         }
     }
 
     private void waitForGameStart() throws InterruptedException {
         synchronized (this) {
-            while (!gameOverFlag) {
+            while (!gameOverFlag && !gameStarted) {
+
                 wait();
             }
+            try{
+                if(gameStarted){
             startGameSession();
+                }
+            }
+            catch(Exception e){
+                System.out.println("Could not start game");
+            }
         }
     }
 
-    private void startGameSession() throws RemoteException{
-        try{
-        new Thread(this::handleGameInput).start();
-        new Thread(this::processMessages).start();
-        }
-        catch(Exception e){
-            System.out.println("eeroror");
+    private void startGameSession() {
+        try {
+            new Thread(() -> {
+                try {
+                    handleGameInput();
+                } catch (Exception e) {
+                    System.err.println("Error in game input thread: " + e.getMessage());
+                }
+            }).start();       
+        } catch (Exception e) {
+            System.out.println("Error starting game session: " + e.getMessage());
         }
     }
 
@@ -182,7 +198,7 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
 
  
 
-    private void processMessages() throws RemoteException {
+    private void processMessages()  {
         
         while (!gameOverFlag) {
             try{
@@ -194,7 +210,7 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
         catch (RemoteException e) {
             System.err.println("Remote connection error: " + e.getMessage());
             e.printStackTrace();
-            gameOverFlag = true; // Terminate the game on critical errors
+           // gameOverFlag = true; 
         } catch (Exception e) {
             System.err.println("Unexpected error: " + e.getMessage());
             e.printStackTrace();
@@ -208,6 +224,14 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
             case "GUESS": processGuess(msg); break;
             case "STATE": updateState(msg); break;
             case "JOIN": handlePlayerJoin(msg); break;
+            case "GAMEOVER": System.out.println(msg.contents); break;
+            case "GAMESTART":
+            synchronized (this) {
+                gameStarted = true;
+                notifyAll();
+            }
+            break;
+            
         }
 
     }
@@ -226,13 +250,14 @@ public class Client extends UnicastRemoteObject implements RemoteBroadcastInterf
         renderPuzzle();
         if(solved || puzzle.getGuessCounter() <= 0){
             gameOverFlag = true;
+            broadcastHandler.broadcast("GAMEOVER", "Game Over! Solved: " + solved);
         }
-        broadcastHandler.broadcast("STATE", currentPuzzle);
     }
 
     private void updateState(BroadcastHandler.Message msg) {
-        this.currentPuzzle = (char[][]) msg.contents;
-        renderPuzzle();
+       // this.currentPuzzle = (char[][]) msg.contents;
+       System.out.println(msg.contents);
+        //renderPuzzle();
     }
 
     private void handlePlayerJoin(BroadcastHandler.Message msg) {
